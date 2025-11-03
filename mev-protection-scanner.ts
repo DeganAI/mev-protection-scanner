@@ -535,7 +535,7 @@ addEntrypoint({
     recommended_gas_price: z.string().optional().describe("Recommended gas price for protection"),
     optimal_slippage: z.number().optional().describe("Recommended slippage tolerance percentage"),
   }),
-  price: "1000",
+  price: ".03",
   async handler({ input }) {
     const startTime = Date.now();
 
