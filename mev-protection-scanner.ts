@@ -4,7 +4,7 @@ import type { EntrypointDef } from "@lucid-dreams/agent-kit/types";
 
 // Configure x402 payments
 const payments = paymentsFromEnv({
-  defaultPrice: "1000", // 1000 base units per scan
+  defaultPrice: "30000", // 30,000 base units = $0.03 (3 cents)
 });
 
 const { app, addEntrypoint } = createAgentApp(
