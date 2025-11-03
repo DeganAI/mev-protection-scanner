@@ -204,28 +204,8 @@ class MEVScanner {
     dexConfig: DEXConfig
   ): Promise<MempoolTransaction[]> {
     // Real implementation would use WebSocket connection
-    // Example: ws.send(JSON.stringify({ method: "eth_subscribe", params: ["newPendingTransactions"] }))
-    
-    const response = await fetch(`https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_getBlockByNumber",
-        params: ["pending", true],
-        id: 1,
-      }),
-    });
-
-    const data = await response.json();
-    
-    if (data.result?.transactions) {
-      return data.result.transactions
-        .filter((tx: any) => tx.to?.toLowerCase() === dexConfig.router.toLowerCase())
-        .slice(0, 50);
-    }
-
-    return [];
+    // For now, return simulated data
+    return this.generateSimulatedMempool(dexConfig);
   }
 
   /**
@@ -234,17 +214,9 @@ class MEVScanner {
   private async fetchFromBlocknative(
     dexConfig: DEXConfig
   ): Promise<MempoolTransaction[]> {
-    const response = await fetch("https://api.blocknative.com/v0/mempool", {
-      headers: {
-        Authorization: this.blocknativeApiKey,
-      },
-    });
-
-    const data = await response.json();
-    
-    return (data.transactions || [])
-      .filter((tx: any) => tx.to?.toLowerCase() === dexConfig.router.toLowerCase())
-      .slice(0, 50);
+    // Real implementation would use Blocknative API
+    // For now, return simulated data
+    return this.generateSimulatedMempool(dexConfig);
   }
 
   /**
@@ -272,7 +244,7 @@ class MEVScanner {
       });
     }
 
-    // Add potential sandwich attack pattern (10% chance)
+    // Add potential sandwich attack pattern (30% chance)
     if (Math.random() < 0.3) {
       const attackerAddress = `0x${Math.random().toString(16).slice(2, 42)}`;
       const highGasPrice = (baseGasPrice + 15) * 1e9;
@@ -307,7 +279,6 @@ class MEVScanner {
    * Generate realistic swap input data
    */
   private generateSwapInput(): string {
-    // Simplified swap function signature
     const signatures = [
       "0x38ed1739", // swapExactTokensForTokens
       "0x8803dbee", // swapTokensForExactTokens
@@ -323,7 +294,6 @@ class MEVScanner {
 
   /**
    * Detect sandwich attack patterns
-   * Looks for front-run + victim + back-run pattern
    */
   private detectSandwichAttack(
     mempoolTxs: MempoolTransaction[],
@@ -343,10 +313,9 @@ class MEVScanner {
       txsByAddress.set(tx.from, existing);
     }
 
-    // Look for addresses with multiple transactions (potential sandwich)
+    // Look for addresses with multiple transactions
     for (const [address, txs] of txsByAddress) {
       if (txs.length >= 2) {
-        // Check if transactions have sequential nonces
         const nonces = txs.map(tx => tx.nonce).sort((a, b) => a - b);
         const isSequential = nonces.every((n, i) => i === 0 || n === nonces[i - 1] + 1);
 
@@ -355,7 +324,6 @@ class MEVScanner {
           riskScore += 30;
         }
 
-        // Check if gas prices are significantly higher than average
         const avgGasPrice = mempoolTxs.reduce((sum, tx) => 
           sum + parseFloat(tx.gasPrice), 0) / mempoolTxs.length;
         
@@ -370,7 +338,6 @@ class MEVScanner {
       }
     }
 
-    // Check for suspiciously similar transaction values
     const values = mempoolTxs.map(tx => parseFloat(tx.value));
     const valueClusters = this.findClusters(values);
     
@@ -387,7 +354,6 @@ class MEVScanner {
 
   /**
    * Detect front-running patterns
-   * Looks for high-gas competing transactions
    */
   private detectFrontRunning(
     mempoolTxs: MempoolTransaction[],
@@ -402,27 +368,22 @@ class MEVScanner {
       return { riskScore: 0, patterns: [] };
     }
 
-    // Calculate gas price statistics
     const gasPrices = mempoolTxs.map(tx => parseFloat(tx.gasPrice));
     const avgGasPrice = gasPrices.reduce((a, b) => a + b, 0) / gasPrices.length;
-    const maxGasPrice = Math.max(...gasPrices);
     const highGasTxs = mempoolTxs.filter(tx => 
       parseFloat(tx.gasPrice) > avgGasPrice * 1.3
     );
 
-    // High mempool competition
     if (mempoolTxs.length > 30) {
       patterns.push(`High mempool activity: ${mempoolTxs.length} competing transactions`);
       riskScore += 15;
     }
 
-    // Transactions with significantly high gas
     if (highGasTxs.length > 5) {
       patterns.push(`${highGasTxs.length} transactions with gas prices >30% above average`);
       riskScore += 25;
     }
 
-    // Very high gas outliers (potential front-runners)
     const veryHighGasTxs = mempoolTxs.filter(tx => 
       parseFloat(tx.gasPrice) > avgGasPrice * 2
     );
@@ -432,7 +393,6 @@ class MEVScanner {
       riskScore += 35;
     }
 
-    // Gas price distribution analysis
     const gasStdDev = this.calculateStdDev(gasPrices);
     if (gasStdDev > avgGasPrice * 0.5) {
       patterns.push("High gas price volatility detected");
@@ -445,48 +405,26 @@ class MEVScanner {
     };
   }
 
-  /**
-   * Calculate gas price percentile for user's transaction
-   */
   private calculateGasPercentile(mempoolTxs: MempoolTransaction[]): number {
     if (mempoolTxs.length === 0) return 50;
-
-    const gasPrices = mempoolTxs
-      .map(tx => parseFloat(tx.gasPrice))
-      .sort((a, b) => a - b);
-
-    // Assume user would use median gas price
+    const gasPrices = mempoolTxs.map(tx => parseFloat(tx.gasPrice)).sort((a, b) => a - b);
     const medianGas = gasPrices[Math.floor(gasPrices.length / 2)];
     const position = gasPrices.filter(g => g <= medianGas).length;
-
     return Math.round((position / gasPrices.length) * 100);
   }
 
-  /**
-   * Estimate potential loss from MEV attack
-   */
   private estimatePotentialLoss(
     amountIn: string,
     sandwichRisk: number,
     frontRunRisk: number
   ): number {
     const amount = parseFloat(amountIn);
-    const combinedRisk = (sandwichRisk * 0.6 + frontRunRisk * 0.4) / 100;
-
-    // Sandwich attacks typically extract 0.5-5% of trade value
-    // Front-running typically extracts 0.1-2% of trade value
-    const sandwichLoss = amount * 0.03 * (sandwichRisk / 100); // Up to 3%
-    const frontRunLoss = amount * 0.015 * (frontRunRisk / 100); // Up to 1.5%
-
-    // Estimate USD value (assuming ~$2000 per ETH for demo)
+    const sandwichLoss = amount * 0.03 * (sandwichRisk / 100);
+    const frontRunLoss = amount * 0.015 * (frontRunRisk / 100);
     const estimatedUSD = (sandwichLoss + frontRunLoss) * 2000;
-
     return Math.round(estimatedUSD * 100) / 100;
   }
 
-  /**
-   * Generate actionable protection suggestions
-   */
   private generateProtectionSuggestions(
     riskScore: number,
     attackType: string,
@@ -495,33 +433,26 @@ class MEVScanner {
   ): string[] {
     const suggestions: string[] = [];
 
-    // Always recommend Flashbots for high-risk situations
     if (riskScore > 60) {
       suggestions.push("🛡️ Use Flashbots Protect RPC to avoid public mempool exposure");
       suggestions.push("⚡ Consider using a private transaction relay service");
     }
 
-    // Slippage recommendations
     if (riskScore > 40) {
       suggestions.push("📊 Increase slippage tolerance to 2-3% to prevent transaction reverts");
     } else if (riskScore > 20) {
       suggestions.push("📊 Set slippage tolerance to 1-2% for better execution");
     }
 
-    // Gas price recommendations
     if (gasPercentile < 40) {
       suggestions.push("⛽ Increase gas price to 60th-70th percentile for faster execution");
-    } else if (gasPercentile > 80) {
-      suggestions.push("💰 Your gas price is very competitive - consider reducing if not urgent");
     }
 
-    // Timing recommendations
     if (competingTxs > 40) {
       suggestions.push("⏰ High mempool congestion - consider waiting 2-5 minutes");
       suggestions.push("🔄 Split large trades into smaller chunks");
     }
 
-    // Attack-specific suggestions
     if (attackType === "sandwich") {
       suggestions.push("🥪 Sandwich attack detected - use private RPC or increase gas significantly");
       suggestions.push("🔐 Consider using CowSwap or 1inch Fusion for MEV protection");
@@ -529,10 +460,8 @@ class MEVScanner {
       suggestions.push("🏃 Front-running detected - increase gas price or use private mempool");
     }
 
-    // DEX-specific recommendations
     suggestions.push("🔀 Consider using MEV-protected DEX aggregators (CowSwap, 1inch Fusion)");
 
-    // Monitoring recommendation
     if (riskScore > 50) {
       suggestions.push("👁️ Monitor transaction closely and be prepared to cancel if needed");
     }
@@ -540,29 +469,14 @@ class MEVScanner {
     return suggestions;
   }
 
-  /**
-   * Recommend optimal gas price based on mempool state
-   */
-  private recommendGasPrice(
-    mempoolTxs: MempoolTransaction[],
-    currentPercentile: number
-  ): string {
+  private recommendGasPrice(mempoolTxs: MempoolTransaction[], currentPercentile: number): string {
     if (mempoolTxs.length === 0) return "30 gwei";
-
-    const gasPrices = mempoolTxs
-      .map(tx => parseFloat(tx.gasPrice) / 1e9) // Convert to gwei
-      .sort((a, b) => a - b);
-
-    // Recommend 65th percentile for good execution without overpaying
+    const gasPrices = mempoolTxs.map(tx => parseFloat(tx.gasPrice) / 1e9).sort((a, b) => a - b);
     const targetIndex = Math.floor(gasPrices.length * 0.65);
     const recommendedGas = gasPrices[targetIndex] || 30;
-
     return `${Math.round(recommendedGas)} gwei`;
   }
 
-  /**
-   * Calculate optimal slippage based on risk score
-   */
   private calculateOptimalSlippage(riskScore: number): number {
     if (riskScore > 70) return 3.0;
     if (riskScore > 50) return 2.0;
@@ -570,36 +484,24 @@ class MEVScanner {
     return 1.0;
   }
 
-  /**
-   * Find clusters in numeric data
-   */
   private findClusters(values: number[]): number[][] {
     const clusters: number[][] = [];
     const sorted = [...values].sort((a, b) => a - b);
-    
     let currentCluster: number[] = [sorted[0]];
     
     for (let i = 1; i < sorted.length; i++) {
       if (Math.abs(sorted[i] - sorted[i - 1]) < sorted[i] * 0.1) {
         currentCluster.push(sorted[i]);
       } else {
-        if (currentCluster.length > 1) {
-          clusters.push(currentCluster);
-        }
+        if (currentCluster.length > 1) clusters.push(currentCluster);
         currentCluster = [sorted[i]];
       }
     }
     
-    if (currentCluster.length > 1) {
-      clusters.push(currentCluster);
-    }
-    
+    if (currentCluster.length > 1) clusters.push(currentCluster);
     return clusters;
   }
 
-  /**
-   * Calculate standard deviation
-   */
   private calculateStdDev(values: number[]): number {
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
     const squareDiffs = values.map(v => Math.pow(v - avg, 2));
@@ -633,12 +535,11 @@ addEntrypoint({
     recommended_gas_price: z.string().optional().describe("Recommended gas price for protection"),
     optimal_slippage: z.number().optional().describe("Recommended slippage tolerance percentage"),
   }),
-  price: "1000", // 1000 base units per scan
+  price: "1000",
   async handler({ input }) {
     const startTime = Date.now();
 
     try {
-      // Perform MEV risk analysis
       const analysis = await scanner.analyzeMEVRisk(
         input.token_in,
         input.token_out,
@@ -648,11 +549,6 @@ addEntrypoint({
       );
 
       const responseTime = Date.now() - startTime;
-      
-      // Ensure response time < 3 seconds
-      if (responseTime > 3000) {
-        console.warn(`Response time exceeded 3s: ${responseTime}ms`);
-      }
 
       return {
         output: analysis,
@@ -683,7 +579,7 @@ addEntrypoint({
   },
 });
 
-// Add a health check entrypoint for monitoring
+// Add status entrypoint
 addEntrypoint({
   key: "status",
   description: "Check the health and configuration of the MEV scanner",
@@ -710,4 +606,15 @@ addEntrypoint({
   },
 });
 
-export default app;
+// Start server on Railway-compatible port
+const port = parseInt(process.env.PORT || "8080", 10);
+const host = process.env.HOST || "0.0.0.0";
+
+// Export for Bun.serve
+export default {
+  port,
+  hostname: host,
+  fetch: app.fetch,
+};
+
+console.log(`🛡️ MEV Protection Scanner started on ${host}:${port}`);
