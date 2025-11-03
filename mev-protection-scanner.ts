@@ -598,7 +598,7 @@ addEntrypoint({
         },
         supported_dexes: Object.keys(DEX_CONFIGS),
         pricing: {
-          per_scan: "1000 base units",
+          per_scan: ".03 base units",
         },
       },
       usage: { total_tokens: 1 },
